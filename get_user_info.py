@@ -6,6 +6,7 @@ import pickle
 
 def init():
     # remember to set the token as one of the environment parameters
+    # https://slackapi.github.io/python-slackclient/auth.html#handling-tokens-and-other-sensitive-data
     slack_token = os.environ["SLACK_API_TOKEN"]
     global sc
     sc = SlackClient(slack_token)
@@ -137,7 +138,7 @@ user_activity = get_top_users(history)
 pprint(user_activity[:top])
 
 # user-specific
-name = "David Zhang"
+name = "Connor Richards"
 print("\nMessages sent by", name)
 for c in get_user_activity(name).items():
     if len(c[1]) > 0:
