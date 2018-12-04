@@ -11,8 +11,8 @@ def init():
     sc = SlackClient(slack_token)
 
 
-def access_cache(name, update, func):
-    if update:
+def access_cache(name, update, func, force_update=False):
+    if update or force_update:
         data = func()
         pickle.dump(data, open('cache/'+str(name)+".pkl", 'wb'))
         return data
@@ -25,35 +25,52 @@ def access_cache(name, update, func):
 
 def get_channels(update=False):
     def func():
-        raw_channels = sc.api_call("channels.list")["channels"]
+        raw_channels = sc.api_call("conversations.list",
+                                   types="public_channel, private_channel, mpim, im")["channels"]
         channels = {}
         for c in raw_channels:
-            channels[c['name']] = c['id']
+            if 'name' in c:
+                channels[c['name']] = c['id']
+            else:
+                channels[c['id']] = c['id']
         return channels
 
     return access_cache("channels", update, func)
 
-
-def get_channel_history(channel_id, update=False):
+def get_conversation_history(channel_id, update=False):
     def func():
         raw_history = sc.api_call(
-            "channels.history",
+            "conversations.history",
             channel=channel_id,
             count=1000
         )
+        for msg in raw_history['messages']:
+            if 'replies' in msg:
+                for reply in msg['replies']:
+                    reply['text'] = "N/A; was found in thread"
+                    raw_history['messages'].append(reply)
+
         return raw_history['messages']
 
-    return access_cache("channel_"+channel_id+"_history", update, func)
+    return access_cache("conversation_"+channel_id+"_history", update, func)
 
 
-def get_all_history(update=False):
+def get_all_history(update=False, return_channel_breakdown=False):
     def func():
         channels = get_channels(update=update)
         all_messages = []
+        channel_breakdown = {}
         for c in channels.values():
-            all_messages.append(get_channel_history(c))
+            h = get_conversation_history(c)
+            channel_breakdown[c] = h
+            all_messages.append(h)
 
-        return [message for channel in all_messages for message in channel]
+        # flatten
+        history = [message for channel in all_messages for message in channel]
+        if return_channel_breakdown:
+            return history, channel_breakdown
+        else:
+            return history
 
     return access_cache("all_history", update, func)
 
@@ -72,7 +89,7 @@ def get_all_users(update=False):
     return access_cache("userlist", update, func)
 
 
-def get_users_activity(messages, update=False):
+def get_top_users(messages, update=False):
     user_list = get_all_users(update=update)
     users = {}
     for m in messages:
@@ -83,13 +100,47 @@ def get_users_activity(messages, update=False):
             users[user] = 1
     return [(key, users[key]) for key in sorted(users, key=users.get, reverse=True)]
 
+
+def get_user_activity(name, update=False):
+    def func():
+        user_list = {kv[1]: kv[0] for kv in get_all_users().items()}
+        user_id = user_list[name]
+        chan_list = {kv[1]: kv[0] for kv in get_channels().items()}
+
+        history, channel_history = get_all_history(return_channel_breakdown=True, update=update)
+
+        channels = {}
+
+        for chn in channel_history.items():
+            channel_name = chan_list[chn[0]]
+            channels[channel_name] = []
+            for msg in chn[1]:
+                if msg['user'] == user_id:
+                    channels[channel_name].append(msg['text'])
+        return channels
+
+    return access_cache("user_"+name, update, func)
+
+
 init()
-chans = get_channels(update=False)
-print("\nList of channels searched: ")
-print(list(chans.keys()))
-print("\nNumber of total users:", len(get_all_users(update=False)))
-print("\nNumber of total messages in all public channels:", len(get_all_history(update=False)))
+chans = get_channels()
+users = get_all_users()
+history, channel_history = get_all_history(return_channel_breakdown=True)
+
+print("\nList of channels searched:", list(chans.keys()))
+print("\nNumber of total users:", len(users))
+print("\nNumber of total messages in all channels:", len(history))
+
 top = 20
 print("\nNumber of messages sent by the top {} users:  ".format(top))
-pprint(get_users_activity(get_all_history())[:top])
+user_activity = get_top_users(history)
+pprint(user_activity[:top])
+
+# user-specific
+name = "David Zhang"
+print("\nMessages sent by", name)
+for c in get_user_activity(name).items():
+    if len(c[1]) > 0:
+        print(c[0], ": ", len(c[1]))
+
 
