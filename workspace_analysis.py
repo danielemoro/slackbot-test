@@ -7,10 +7,18 @@ import pickle
 def init():
     # remember to set the token as one of the environment parameters
     # https://slackapi.github.io/python-slackclient/auth.html#handling-tokens-and-other-sensitive-data
-    slack_token = os.environ["SLACK_API_TOKEN"]
+    token = os.environ["SLACK_TOKEN"]
     global sc
-    sc = SlackClient(slack_token)
+    sc = SlackClient(token)
+    check_connection()
 
+
+def check_connection():
+        response = sc.api_call("users.list", count=1000 )
+        if not response['ok']:
+            raise Exception("COULD NOT CONNECT: "+str(response))
+        else:
+            return True
 
 def access_cache(name, update, func, force_update=False):
     if update or force_update:
@@ -27,7 +35,7 @@ def access_cache(name, update, func, force_update=False):
 def get_channels(update=False):
     def func():
         raw_channels = sc.api_call("conversations.list",
-                                   types="public_channel, private_channel, mpim, im")["channels"]
+                                   types="public_channel,private_channel,mpim,im")["channels"]
         channels = {}
         for c in raw_channels:
             if 'name' in c:
@@ -94,7 +102,10 @@ def get_top_users(messages, update=False):
     user_list = get_all_users(update=update)
     users = {}
     for m in messages:
-        user = user_list[m['user']]
+        try:
+            user = user_list[m['user']]
+        except KeyError:
+            continue
         if user in users.keys():
             users[user] += 1
         else:
@@ -116,32 +127,81 @@ def get_user_activity(name, update=False):
             channel_name = chan_list[chn[0]]
             channels[channel_name] = []
             for msg in chn[1]:
-                if msg['user'] == user_id:
-                    channels[channel_name].append(msg['text'])
+                try:
+                    if msg['user'] == user_id:
+                        channels[channel_name].append(msg['text'])
+                except KeyError:
+                    continue
         return channels
 
     return access_cache("user_"+name, update, func)
+
+def get_all_emails(update=False):
+    def func():
+        raw_users = sc.api_call(
+            "users.list",
+            count=1000
+        )
+        emails = {}
+        for mem in raw_users['members']:
+            print(mem["profile"])
+            try:
+                emails[mem['real_name']] = mem["profile"]["email"]
+            except KeyError:
+                continue
+
+        return emails
+
+    return access_cache("useremails", update, func)
+
+def send_message(name, msg, users):
+   user_list = {kv[1]: kv[0] for kv in users.items()}
+   user_id = user_list[name]
+
+   if input("Can I send this to {}? \n\n{}".format(name, msg)).startswith("y"):
+       out = sc.api_call(
+            "chat.postMessage",
+            channel=user_id,
+            text=msg,
+            username="Goldwater Scholar Community Council",
+            icon_emoji=":gsc:"
+       )
+       print(out)
+   else:
+       print("halted")
 
 
 init()
 chans = get_channels()
 users = get_all_users()
-history, channel_history = get_all_history(return_channel_breakdown=True)
+#
+# with open("gsc_message.txt", "r") as f:
+#     msg = f.read()
+# send_message("Daniele Moro", "[THIS IS A TEST FROM DANIELE]\n"+msg, users)
 
-print("\nList of channels searched:", list(chans.keys()))
-print("\nNumber of total users:", len(users))
-print("\nNumber of total messages in all channels:", len(history))
-
-top = 20
-print("\nNumber of messages sent by the top {} users:  ".format(top))
-user_activity = get_top_users(history)
-pprint(user_activity[:top])
+# history, channel_history = get_all_history(return_channel_breakdown=True)
+#
+# print("\nList of channels searched:", list(chans.keys()))
+# print("\nNumber of total users:", len(users))
+# print("\nNumber of total messages in all channels:", len(history))
+#
+# top = 20
+# print("\nNumber of messages sent by the top {} users:  ".format(top))
+# user_activity = get_top_users(history)
+# pprint(user_activity[:top])
 
 # user-specific
-name = "Connor Richards"
-print("\nMessages sent by", name)
-for c in get_user_activity(name).items():
-    if len(c[1]) > 0:
-        print(c[0], ": ", len(c[1]))
+# name = "Patrick Devlin"
+# print("\nMessages sent by", name)
+# print("Total of {} messages\n".format(sum([len(i) for i in get_user_activity(name).values()])))
+# for c in get_user_activity(name).items():
+#     if len(c[1]) > 0:
+#         print(c[0], ": ", len(c[1]))
+
+# # emails
+emails = get_all_emails()
+pprint(emails)
+with open('emails.csv', 'w') as f:
+    [f.write('{0},{1}\n'.format(key, value)) for key, value in emails.items()]
 
 
